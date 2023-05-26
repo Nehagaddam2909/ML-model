@@ -5,110 +5,86 @@ from datetime import datetime
 import csv
 import numpy as np
 import pandas as pd
-from fbprophet import Prophet
+from prophet import Prophet
 
 #import file system
 # import FileSystemStorage
 from django.core.files.storage import FileSystemStorage
 fs=FileSystemStorage(location='data/')
-
+import json
 @api_view(['POST'])  
 def getData(request):
-    get_path=fs.path('CovidData.csv')
-    train = pd.read_csv('https://raw.githubusercontent.com/datasets/covid-19/master/data/time-series-19-covid-combined.csv')
-    train.rename(columns = {"Province/State": "state", "Country/Region":"country"}, inplace = True)
-    train.drop('Lat', axis = 1, inplace = True)
-    train.drop('Long', axis = 1, inplace = True)
-    train.drop('Recovered', axis = 1, inplace = True)
-
-    train.state = train.state.fillna('Not Available')
+    # print(request.body)
+    # d=request.body.import traceback; traceback.print_exc();
+    #convert reuest body to json
+    data=json.loads(request.body)
+    print(data)
+    train = pd.read_csv('https://raw.githubusercontent.com/imdevskp/covid-19-india-data/master/complete.csv')
+    train.rename(columns = {"Total Confirmed cases":'Confirmed',"Name of State / UT":"State","Cured/Discharged/Migrated":"Recovered"}, inplace = True)
+    train.State = train.State.fillna('Not Available')
+    train.sort_values('Date').reset_index().drop('index', axis =1)
+    train.groupby('Date')[['Confirmed','State','Death']].sum().reset_index()
+    train_west = train.loc[train['State']==data['state']].copy()
+    train_west['Date'] = pd.to_datetime(train_west['Date'])
+    train_west = train_west.set_index('Date')
+    train_ind2 = train_west.loc[train_west['Confirmed']>0]
     
-    train_new = train[train.Date == train.Date.max()].groupby(by='country')
-    train_new = train_new.aggregate(np.sum)
-    train_new.reset_index(level=0, inplace=True)
-    
-    train_n2 = train.drop(['state'],axis=1)
-
-    train_n2.sort_values('Date').reset_index().drop('index', axis =1)
-
-
-    train_n2.groupby('Date')[['Confirmed','country','Deaths']].sum().reset_index()
-
-    #TRAINING THE MODEL TO GET A PREDICTION MODEL CURVE FOR INDIA AND BASED PREDICTIONS
-    train_ind = train_n2.loc[train_n2['country']=='India'].copy()
-
-    train_ind['Date'] = pd.to_datetime(train_ind['Date'])
-    train_ind = train_ind.set_index('Date')
-    # train_ind.head()
-
-    train_ind2 = train_ind.drop(['country','Deaths'],axis = 1)
-    train_ind2 = train_ind2.loc[train_ind2['Confirmed']>0]
-    train_ind3 = train_ind2
-    # train_ind2.head()
-
-    # #DATA VISUALIZATION
-    # pd.plotting.register_matplotlib_converters()
-    # from statsmodels.tsa.seasonal import seasonal_decompose
-    # result = seasonal_decompose(train_ind2, model='multiplicative')
-    # result.plot()
-    # plt.show()
-
     new_colname = 'y'
-    train_ind2.index.rename('ds', inplace=True)
     train_ind2.rename(columns = {'Confirmed' : 'y'},inplace=True)
     train_ind2.reset_index(level=0, inplace=True)
-    train_ind2.head()
-
-
-    # instantiate the model and set parameters
+    
     model = Prophet(
-        interval_width=0.95,
-        holidays = pd.DataFrame({'holiday': 'lockdown','ds': pd.to_datetime(['2020-03-24','2020-03-25','2020-03-26','2020-03-27','2020-03-28','2020-03-29','2020-03-30','2020-03-31','2020-04-01'
-        ,'2020-04-02','2020-04-03','2020-04-04','2020-04-05','2020-04-05','2020-04-06','2020-04-07','2020-04-08','2020-04-09','2020-04-10','2020-04-11','2020-04-12','2020-04-13','2020-04-14'])}),
-        growth='linear',
-        daily_seasonality=False,
-        weekly_seasonality=True,
-        yearly_seasonality=True,
-        seasonality_mode='multiplicative'
+    interval_width=0.95,
+    holidays = pd.DataFrame({'holiday': 'lockdown','ds': pd.to_datetime(['2020-03-24','2020-03-25','2020-03-26','2020-03-27','2020-03-28','2020-03-29','2020-03-30','2020-03-31','2020-04-01'
+    ,'2020-04-02','2020-04-03','2020-04-04','2020-04-05','2020-04-05','2020-04-06','2020-04-07','2020-04-08','2020-04-09','2020-04-10','2020-04-11','2020-04-12','2020-04-13','2020-04-14'])}),
+    growth='linear',
+    daily_seasonality=False,
+    weekly_seasonality=True,
+    yearly_seasonality=True,
+    seasonality_mode='multiplicative'
     )
-
-    # fit the model to historical data
-
+    train_ind2.rename(columns = {'Date' : 'ds'},inplace=True)
+    print("model:",train_ind2)
+    # train_ind2.
     model.fit(train_ind2)
-
     future_pd = model.make_future_dataframe(
-        periods=60,
-        freq='d',
-        include_history=True
+    periods=60,
+    freq='d',
+    include_history=True
     )
-
-    # predict over the dataset
+    
     forecast_pd = model.predict(future_pd)
+    forecast_pd[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].iloc[55:63]
+    fpd = pd.DataFrame(forecast_pd[['ds', 'yhat', 'yhat_lower', 'yhat_upper']])
 
-    # #PREDICTION CURVE OF COVID19 INDIA FOR UPCOMING MONTHS
-    # #CURVE IS EXACTLY SIMILAR AS PROVIDED BY RESEARCH OF SINGAPORE UNIVERSITY
-    # predict_fig = model.plot(forecast_pd, xlabel='date', ylabel='confirmed cases')
+    fpd.rename(columns= {'ds':'Date', 'yhat':'Predicted Cases of Kerala'},inplace=True)
 
-    # #MONTH WISE PREDICTION INDIA
-    # from fbprophet.plot import plot_plotly
-    # import plotly.offline as py
+    fpd.drop(['yhat_lower','yhat_upper'],axis=1,inplace=True)
 
-    # fig = plot_plotly(model, forecast_pd)  # This returns a plotly Figure
-    # py.iplot(fig)
+    #prediction of cases in Westbengal for date 28/04/2020
+    k=fpd[(fpd['Date']>= '2020-04-28') & (fpd['Date']<= '2020-04-28')]
+    print("k:",k)
 
-    # forecast_pd[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].iloc[55:63]
-
-    # fpd = pd.DataFrame(forecast_pd[['ds', 'yhat', 'yhat_lower', 'yhat_upper']])
-
-    # fpd.rename(columns= {'ds':'Date', 'yhat':'Predicted Cases'},inplace=True)
-
-    # fpd.drop(['yhat_lower','yhat_upper'],axis=1,inplace=True)
-
-    # #PREDICTION OF COVID CASES INDIA IN UPCOMING MONTHS AND DAYS JUST CHANGE THE DATE AND RUN THE SCRIPT FOR UPDATED RESULTS
-    # fpd[(fpd['Date']>= '2020-04-29') & (fpd['Date']<= '2020-04-30')]
-
+    # type of k 
+    print("type of k:",type(k))
 
 
     person={'name':'John','age':23}
-    return Response(future_pd.to_json())
+    print("This works")
+    k=k.to_json(orient='records')
+    print("This not")
+    try:
+        # convert k to string and then to json
+        parsed_data = json.loads(k) 
+        print("parsed_data:",parsed_data)
+        # Convert Timestamp to a JSON-serializable format
+        parsed_data[0]["Date"] = datetime.fromtimestamp(parsed_data[0]["Date"] / 1000).isoformat()
+        print("parsed_data after process:",parsed_data)
+        # prettified_data = json.dumps(parsed_data, indent=4)
+        # print("prettified_data:",prettified_data)
+        return Response(parsed_data[0], content_type='application/json')
+    except json.JSONDecodeError:
+        return Response("Invalid data")
+
+    # return Response(json.dumps(k.to_dict(orient='records')))
 
